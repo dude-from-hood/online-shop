@@ -1,0 +1,88 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:v25.2.1
+    container_name: online-shop-redpanda
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - 512M
+      - --reserve-memory
+      - 0M
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr
+      - internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    networks:
+      - online-shop-network
+
+  redpanda-console:
+    image: redpandadata/console:v3.2.2
+    container_name: online-shop-redpanda-console
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    depends_on:
+      - redpanda
+    ports:
+      - "8080:8080"
+    networks:
+      - online-shop-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: online-shop-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-online_shop}
+      POSTGRES_USER: ${POSTGRES_USER:-online_shop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-online_shop}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-online_shop} -d ${POSTGRES_DB:-online_shop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - online-shop-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: online-shop-backend
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-online_shop}
+      POSTGRES_USER: ${POSTGRES_USER:-online_shop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-online_shop}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_ORDERS_TOPIC: orders.events
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    networks:
+      - online-shop-network
+
+networks:
+  online-shop-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
